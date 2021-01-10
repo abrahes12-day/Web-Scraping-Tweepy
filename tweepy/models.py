@@ -1,16 +1,16 @@
 # Tweepy
-# Copyright 2009-2020 Joshua Roesslein
+# Copyright 2009-2021 Joshua Roesslein
 # See LICENSE for details.
 
-from __future__ import absolute_import
+from email.utils import parsedate_to_datetime
 
-from tweepy.utils import parse_a_href, parse_datetime, parse_html_value
+from tweepy.mixins import Hashable
 
 
 class ResultSet(list):
     """A list like object that holds results from a Twitter API query."""
     def __init__(self, max_id=None, since_id=None):
-        super(ResultSet, self).__init__()
+        super().__init__()
         self._max_id = max_id
         self._since_id = since_id
 
@@ -34,7 +34,7 @@ class ResultSet(list):
         return [item.id for item in self if hasattr(item, 'id')]
 
 
-class Model(object):
+class Model:
 
     def __init__(self, api=None):
         self._api = api
@@ -84,7 +84,7 @@ class Model(object):
         return '%s(%s)' % (self.__class__.__name__, ', '.join(state))
 
 
-class Status(Model):
+class Status(Model, Hashable):
 
     @classmethod
     def parse(cls, api, json):
@@ -97,11 +97,15 @@ class Status(Model):
                 setattr(status, 'author', user)
                 setattr(status, 'user', user)  # DEPRECIATED
             elif k == 'created_at':
-                setattr(status, k, parse_datetime(v))
+                setattr(status, k, parsedate_to_datetime(v))
             elif k == 'source':
                 if '<' in v:
-                    setattr(status, k, parse_html_value(v))
-                    setattr(status, 'source_url', parse_a_href(v))
+                    # At this point, v should be of the format:
+                    # <a href="{source_url}" rel="nofollow">{source}</a>
+                    setattr(status, k, v[v.find('>') + 1:v.rfind('<')])
+                    start = v.find('"') + 1
+                    end = v.find('"', start)
+                    setattr(status, 'source_url', v[start:end])
                 else:
                     setattr(status, k, v)
                     setattr(status, 'source_url', None)
@@ -130,22 +134,8 @@ class Status(Model):
     def favorite(self):
         return self._api.create_favorite(self.id)
 
-    def __eq__(self, other):
-        if isinstance(other, Status):
-            return self.id == other.id
 
-        return NotImplemented
-
-    def __ne__(self, other):
-        result = self == other
-
-        if result is NotImplemented:
-            return result
-
-        return not result
-
-
-class User(Model):
+class User(Model, Hashable):
 
     @classmethod
     def parse(cls, api, json):
@@ -153,7 +143,7 @@ class User(Model):
         setattr(user, '_json', json)
         for k, v in json.items():
             if k == 'created_at':
-                setattr(user, k, parse_datetime(v))
+                setattr(user, k, parsedate_to_datetime(v))
             elif k == 'status':
                 setattr(user, k, Status.parse(api, v))
             elif k == 'following':
@@ -196,38 +186,19 @@ class User(Model):
         self.following = False
 
     def lists_memberships(self, *args, **kwargs):
-        return self._api.lists_memberships(user=self.screen_name,
-                                           *args,
-                                           **kwargs)
+        return self._api.lists_memberships(user_id=self.id, *args, **kwargs)
+
+    def lists_ownerships(self, *args, **kwargs):
+        return self._api.lists_ownerships(user_id=self.id, *args, **kwargs)
 
     def lists_subscriptions(self, *args, **kwargs):
-        return self._api.lists_subscriptions(user=self.screen_name,
-                                             *args,
-                                             **kwargs)
+        return self._api.lists_subscriptions(user_id=self.id, *args, **kwargs)
 
     def lists(self, *args, **kwargs):
-        return self._api.lists_all(user=self.screen_name,
-                                   *args,
-                                   **kwargs)
+        return self._api.lists_all(user_id=self.id, *args, **kwargs)
 
     def followers_ids(self, *args, **kwargs):
-        return self._api.followers_ids(user_id=self.id,
-                                       *args,
-                                       **kwargs)
-
-    def __eq__(self, other):
-        if isinstance(other, User):
-            return self.id == other.id
-
-        return NotImplemented
-
-    def __ne__(self, other):
-        result = self == other
-
-        if result is NotImplemented:
-            return result
-
-        return not result
+        return self._api.followers_ids(user_id=self.id, *args, **kwargs)
 
 
 class DirectMessage(Model):
@@ -286,7 +257,7 @@ class SavedSearch(Model):
         ss = cls(api)
         for k, v in json.items():
             if k == 'created_at':
-                setattr(ss, k, parse_datetime(v))
+                setattr(ss, k, parsedate_to_datetime(v))
             else:
                 setattr(ss, k, v)
         return ss
@@ -324,7 +295,7 @@ class List(Model):
             if k == 'user':
                 setattr(lst, k, User.parse(api, v))
             elif k == 'created_at':
-                setattr(lst, k, parse_datetime(v))
+                setattr(lst, k, parsedate_to_datetime(v))
             else:
                 setattr(lst, k, v)
         return lst
@@ -345,9 +316,9 @@ class List(Model):
         return self._api.destroy_list(self.slug)
 
     def timeline(self, **kwargs):
-        return self._api.list_timeline(self.user.screen_name,
-                                       self.slug,
-                                       **kwargs)
+        return self._api.list_timeline(
+            self.user.screen_name, self.slug, **kwargs
+        )
 
     def add_member(self, id):
         return self._api.add_list_member(self.slug, id)
@@ -356,14 +327,12 @@ class List(Model):
         return self._api.remove_list_member(self.slug, id)
 
     def members(self, **kwargs):
-        return self._api.list_members(self.user.screen_name,
-                                      self.slug,
-                                      **kwargs)
+        return self._api.list_members(
+            self.user.screen_name, self.slug, **kwargs
+        )
 
     def is_member(self, id):
-        return self._api.is_list_member(self.user.screen_name,
-                                        self.slug,
-                                        id)
+        return self._api.is_list_member(self.user.screen_name, self.slug, id)
 
     def subscribe(self):
         return self._api.subscribe_list(self.user.screen_name, self.slug)
@@ -372,14 +341,14 @@ class List(Model):
         return self._api.unsubscribe_list(self.user.screen_name, self.slug)
 
     def subscribers(self, **kwargs):
-        return self._api.list_subscribers(self.user.screen_name,
-                                          self.slug,
-                                          **kwargs)
+        return self._api.list_subscribers(
+            self.user.screen_name, self.slug, **kwargs
+        )
 
     def is_subscribed(self, id):
-        return self._api.is_subscribed_list(self.user.screen_name,
-                                            self.slug,
-                                            id)
+        return self._api.is_subscribed_list(
+            self.user.screen_name, self.slug, id
+        )
 
 
 class Relation(Model):
@@ -505,7 +474,7 @@ class Media(Model):
         return media
 
 
-class ModelFactory(object):
+class ModelFactory:
     """
     Used by parsers for creating instances
     of models. You may subclass this factory

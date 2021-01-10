@@ -1,5 +1,5 @@
 # Tweepy
-# Copyright 2009-2020 Joshua Roesslein
+# Copyright 2009-2021 Joshua Roesslein
 # See LICENSE for details.
 
 import json as json_lib
@@ -8,7 +8,7 @@ from tweepy.error import TweepError
 from tweepy.models import ModelFactory
 
 
-class Parser(object):
+class Parser:
 
     def parse(self, method, payload, *args, **kwargs):
         """
